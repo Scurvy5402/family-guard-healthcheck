@@ -1,0 +1,47 @@
+name: Family Guard health check
+on:
+  schedule:
+    - cron: "7,37 * * * *"   # about every 30 minutes (UTC)
+  workflow_dispatch:
+    inputs:
+      force_fail:
+        description: "Simulate an outage (test only)"
+        type: boolean
+        default: false
+permissions:
+  issues: write
+concurrency: healthcheck
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          FORCE_FAIL: ${{ inputs.force_fail }}
+        with:
+          script: |
+            const urls = ["https://family-guard.dustymumaugh.workers.dev/health", "https://family-guard-watchdog.dustymumaugh.workers.dev/health"];
+            const probs = [];
+            for (const u of urls) {
+              try {
+                const r = await fetch(u, { signal: AbortSignal.timeout(20000) });
+                const j = await r.json();
+                if (!r.ok || !j.ok) probs.push(`${j.service || u}: not healthy ${JSON.stringify(j)}`);
+                else core.info(`${j.service}: ok ${JSON.stringify(j)}`);
+              } catch (e) { probs.push(`${u}: unreachable (${e.message})`); }
+            }
+            if (process.env.FORCE_FAIL === "true") probs.push("TEST: forced failure from a manual run (not a real outage)");
+            const title = "Family Guard is down";
+            const { owner, repo } = context.repo;
+            const open = (await github.rest.issues.listForRepo({ owner, repo, state: "open", labels: "outage" })).data[0];
+            const when = new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }) + " CT";
+            if (probs.length) {
+              const body = `Checked ${when}:\n\n- ${probs.join("\n- ")}\n\nCheck Cloudflare > Workers & Pages > family-guard.`;
+              if (open) await github.rest.issues.createComment({ owner, repo, issue_number: open.number, body });
+              else await github.rest.issues.create({ owner, repo, title, body, labels: ["outage"], assignees: [owner] });
+              core.setFailed(probs.join("; "));
+            } else if (open) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: open.number, body: `Recovered: all checks healthy at ${when}.` });
+              await github.rest.issues.update({ owner, repo, issue_number: open.number, state: "closed" });
+            }
