@@ -1,7 +1,9 @@
 name: Family Guard health check
 on:
-  schedule:
-    - cron: "3,33 * * * *"   # about every 30 minutes (UTC); re-registered Nov 2
+  # schedule paused Nov 18, 2026 while Family Guard is switched off for the rebuild.
+  # To turn back on at go-live, restore:
+  # schedule:
+  #   - cron: "3,33 * * * *"
   workflow_dispatch:
     inputs:
       force_fail:
